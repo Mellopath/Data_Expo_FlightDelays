@@ -1,0 +1,731 @@
+
+```{r}
+#Packages used for project - Run this first and then run connection
+#I put the packages here instead of above the code for organisation
+library(DBI)
+library(dplyr)
+library(RSQLite)
+library(ggplot2)
+library(ggthemes)
+library(cowplot)
+library(shiny)
+library(ggforce)
+library(GGally)
+library(scales)
+#Machine learning
+library(mlr3)
+library(mlr3learners)
+library(skimr)
+library(mlr3pipelines)
+library(mlr3tuning)
+library(paradox)
+library(mlr3viz)
+library(ranger)
+
+```
+
+```{r}
+#Create a connection to SQLlite DBbrowser
+#Have to run this after packages before running other codes
+conn <- dbConnect(RSQLite::SQLite(), "Coursework_r.db")
+```
+
+```{r}
+#Using read.csv function to read the csv data files and save it into R. use header = true to include header
+airports <- read.csv("airports.csv", header = TRUE)
+carriers <- read.csv("carriers.csv", header = TRUE)
+planes <- read.csv("plane-data.csv", header = TRUE)
+year2000 <- read.csv("2000.csv", header = TRUE)
+year2001 <- read.csv("2001.csv", header = TRUE)
+```
+
+```{r}
+#use dbWriteTable to write a dataframe to a database table in DBbrowser.
+dbWriteTable(conn, "airports", airports)
+dbWriteTable(conn, 'carriers' , carriers)
+dbWriteTable(conn, 'planes', planes)
+dbWriteTable(conn, 'ontime' , year2000, append = TRUE) #append = True is important for on-time if not there will be an error saying there is an                                                                  existing table 
+dbWriteTable(conn, 'ontime' , year2001, append = TRUE)
+```
+
+question 1
+
+```{r}
+#When is the best time of day, day of the week, and time of year to fly to minimise delays?
+
+#Use dbGetQuery , call the connection to query columns from the dataset in DBbrowser
+#SELECT is to choose the columns that you want to query
+#FROM is to select the table to query from
+#WHERE is to set the conditions when querying
+#GROUP BY is to group and categorize the data by a certain column
+#ORDER BY is order by the data in ascending order
+
+q1a <- dbGetQuery(conn, "
+SELECT DayOfWeek AS Day, AVG(ArrDelay + DepDelay) AS AVGDelay , SUM(ArrDelay + DepDelay) as Total, COUNT(DepDelay) as Count
+FROM ontime
+WHERE Cancelled=0 AND Diverted=0 AND ArrDelay >0 AND DepDelay >0
+GROUP BY Day
+ORDER BY Day 
+")
+q1a
+
+##BARCHART---------------------------------------------------------------------------------------------------
+#plotting bar chart for average delay by day
+bar1a <- ggplot(q1a) +  
+  geom_col(aes(x= Day, y = AVGDelay),fill = '#E74C3C') +     
+  #geom_col is to create a barchart. aes() is to select the axis used in the barchart, fill is to add color for the bar chart. Geom_bar can also be used but have to use stat = 'identity'
+  
+  labs(title = 'Average Delay by Day', x = "Day of Week", y = "Average Delay") + #labs is to create the title, x and y axis names
+  scale_x_discrete(limits = c("Mon","Tues","Wed","Thurs","Fri","Sat","Sun")) +   #scale_x_discrete is to label 1-7 into monday to sunday
+  theme_cowplot() + 
+  geom_text(aes(x = Day, y = AVGDelay, label = round(AVGDelay,digits = 1)), vjust = 1.5, size = 4) + #geom_text is to display values of data                                                                                                         queried in the barchart  
+  theme(axis.text.x = element_text(color = "grey20", size = 10), #theme is to change the sizing and color of the title, x and y axis
+        axis.text.y = element_text(color = "grey20", size = 10),
+        axis.title.x = element_text(color = "grey20", size = 10),
+        axis.title.y = element_text(color = "grey20", size = 10)
+        )
+ggsave('bar1a.png') #to save the plot as a png to include it in the report
+bar1a  #call bar1a to display the bar chart in R
+
+#count plot---------------------------------------------------------------------------------------------------
+bar1a_count <- ggplot(q1a) + 
+  geom_col(aes(x= Day, y = Count, fill = factor(Day)), fill = '#2ECC71') + 
+  labs(title = 'Total Count of Delays Occur by Day', x = "Day of Week", y = "Count of Delays") + 
+  scale_x_discrete(limits = c("Mon","Tues","Wed","Thurs","Fri","Sat","Sun")) +
+  theme_cowplot() + 
+  geom_text(aes(x = Day, y = Count, label = Count), vjust = 1.5, size = 4) +
+    theme(axis.text.x = element_text(color = "grey20", size = 10),
+        axis.text.y = element_text(color = "grey20", size = 10),
+        axis.title.x = element_text(color = "grey20", size = 10),
+        axis.title.y = element_text(color = "grey20", size = 10)
+        ) +
+  theme(legend.position="none") +  #To remove legend
+  scale_y_continuous(labels = comma) #To remove high count values from having exponential e inside. Makes it a normal integer.
+ggsave('bar1a_count.png')
+bar1a_count
+
+##PIECHART---------------------------------------------------------------------------------------------------
+
+#creating the % for pie chart
+total_denom <- (sum(q1a$Total)) #creating the denominator for total count of flights by summing up the count of flights
+final_percentage <- paste0((round(q1a$Total/total_denom *100)), '%' ) #Creating the percentages value by dividing counts of flights/sum of                                                                            count of flights *100. Use paste to add the percentage sign behind.
+#creating the legend of days for piechart
+Days <- c("Mon","Tues","Wed","Thurs","Fri","Sat","Sun")  #Create a vector called days to be used in as names for piechart
+
+Days <-factor(Days, levels =c("Sun","Sat","Fri","Thurs","Wed","Tues","Mon")) #use factor to order the variables in the vector accordingly
+
+#plotting pie chart to see the % for delay by week
+pie1a <- ggplot(q1a,aes(x= "", y = Total, fill = factor(Days))) + #Plotting the piechart using y axis only, fill=factor(Days) is to add a                                                                         unique color to each unique day
+  geom_bar(stat= "identity", width = 1, color="white") + 
+  coord_polar("y", start=0) +  #to change the shape from a bar chart to a pie chart
+  theme_void() +  #Using void theme since pie chart does not need x and y axis
+  geom_text(aes(y = Total/2 + c(0,cumsum(Total)[-length(Total)]), label = final_percentage)) + 
+  scale_fill_brewer(palette="Set1") +  #to choose the color palette for piechart
+  labs(title = 'Weekly Analysis of Total delay in (%)') + #Label of title
+  theme(plot.title = element_text(size = 12,hjust = 0.5)) #Change the title size 
+pie1a
+ggsave('pie1a.png')
+
+
+
+##FINAL COMBINE PLOTS---------------------------------------------------------------------------------------------------
+
+plot_grid(bar1a, bar1a_count,labels = "AUTO",rel_widths = c(1.65,2))
+pie1a
+```
+
+The rest of the code are similar, will put a comment if i add something unique that needs explanation
+
+```{r}
+q1b <- dbGetQuery(conn, "
+SELECT Month, AVG(ArrDelay + DepDelay) AS AVGDelay, COUNT(DepDelay) as Count
+FROM Ontime
+WHERE Cancelled=0 AND Diverted=0 AND ArrDelay >0 AND DepDelay >0
+GROUP BY Month
+ORDER BY Month
+")
+q1b
+
+#BARCHART---------------------------------------------------------------------------------------------------
+
+#plotting bar chart for average delay by Month
+bar1b <- ggplot(q1b) + 
+  geom_col(aes(x = Month, y = AVGDelay), fill = '#3498DB') +
+  labs(title = 'Average Delay by Month', x = "Month", y = "Average Delay") +
+  scale_x_discrete(limits = c("JAN","FEB","MAR","APR","MAY","JUN","JUL","AUG","SEPT","OCT","NOV","DEC")) +
+  theme_cowplot() +
+  geom_text(aes(x = Month, y = AVGDelay, label = round(AVGDelay,digits = 1)), vjust = 1.5, size = 4) +
+  theme(axis.text = element_text(angle = 90, hjust = 1, vjust = 0.5)) +
+      theme(axis.text.x = element_text(color = "grey20", size = 10),
+        axis.text.y = element_text(color = "grey20", size = 10),
+        axis.title.x = element_text(color = "grey20", size = 10),
+        axis.title.y = element_text(color = "grey20", size = 10)
+        )
+ggsave('bar1b.png')
+bar1b
+
+bar1b_count <- ggplot(q1b) + 
+  geom_col(aes(x = Month, y = Count), fill = '#3498DB') +
+  labs(title = 'Total Count Delays Occur by Month', x = "Month", y = "Count of Delays") +
+  scale_x_discrete(limits = c("JAN","FEB","MAR","APR","MAY","JUN","JUL","AUG","SEPT","OCT","NOV","DEC")) +
+  theme_cowplot() +
+  geom_text(aes(x = Month, y = Count, label = Count), vjust = 1.5, size = 4) +
+  theme(axis.text = element_text(angle = 90, hjust = 1, vjust = 0.5))
+  scale_y_continuous(labels = comma)
+ggsave('bar1b_count.png')
+bar1b_count
+
+```
+
+```{r}
+
+#Use CASE WHEN to create sub categories using specific conditions when querying. THEN is to set the name of that sub category
+#The entire sub category is under the TimeofDay
+q1c <- dbGetQuery(conn, "
+SELECT AVG(ArrDelay + DepDelay) AS AVGDelay,          
+(CASE
+WHEN Deptime > 0500 AND Deptime <= 1100 THEN 'Morning'
+WHEN Deptime > 1100 AND Deptime <= 1700 THEN 'Noon'
+WHEN Deptime > 1700 AND Deptime <= 2400 THEN 'Night'
+When Deptime > 0000 AND Deptime <= 0500 THEN 'Midnight'
+END) As TimeofDay                                    
+FROM Ontime
+WHERE Cancelled=0 AND Diverted=0 AND ArrDelay >0 AND DepDelay >0
+GROUP BY TimeofDay
+Order by AVGDelay
+")
+q1c
+
+#plot
+bar1c <- ggplot(q1c) + 
+  geom_col(aes(x = TimeofDay, y = AVGDelay, fill = factor(TimeofDay))) + 
+  labs(title = 'Average Delay by Time Frame', x = "Time Frame", y = "Average Delay") +
+  scale_x_discrete(limits = c("Morning","Noon","Night","Midnight")) +
+  geom_text(aes(x = TimeofDay, y = AVGDelay, label = round(AVGDelay,digits = 1)), vjust = 1.5, size = 6) +
+  theme(legend.position="none") +
+    theme(axis.text = element_text(angle = 90, hjust = 1, vjust = 0.5)) +
+      theme(axis.text.x = element_text(color = "grey20", size = 10),
+        axis.text.y = element_text(color = "grey20", size = 10),
+        axis.title.x = element_text(color = "grey20", size = 10),
+        axis.title.y = element_text(color = "grey20", size = 10
+                                    )
+        ) +
+  scale_fill_brewer(palette="Set2")
+ggsave('bar1c.png')
+bar1c
+```
+
+question 2
+
+```{r}
+#Do older planes suffer more delays? year 2000 only
+#Use JOIN ON to combine tables plane and ontime using tailnum
+q2 <- dbGetQuery(conn, "
+SELECT planes.manufacturer as Manufacturer, ontime.Year - planes.year as Plane_Life, AVG(DepDelay + ArrDelay) as AVGDelay, 
+AVG(DepDelay) AS AVGDepDelay, AVG(ArrDelay) AS AVGArrDelay, COUNT(DepDelay) as Count
+FROM ontime JOIN planes ON planes.tailnum = ontime.Tailnum
+WHERE planes.year < 2001 AND Cancelled = 0 AND Diverted = 0 AND Plane_life <1000 AND DepDelay > 0 AND ArrDelay > 0
+GROUP BY Plane_Life
+ORDER BY Manufacturer
+")
+q2
+
+## SCATTER 1---------------------------------------------------------------------------------------------------
+
+#Average delay against plane life with regression line
+scatter2a<- ggplot() + 
+  geom_smooth(data = q2, aes(x = Plane_Life, y= AVGDelay), color = "black", size = 0.8, method = loess) +
+  geom_jitter(data = q2, aes(x = Plane_Life, y= AVGDelay),color = "#FF6666", size = 3) + 
+  labs(title = 'Average Delay against Plane Age', x = 'Plane Age' , y = 'Average Delay') +
+  theme(axis.text = element_text( hjust = 1, vjust = 0.5)) +
+  theme(axis.text.x = element_text(color = "grey20", size = 20),
+        axis.text.y = element_text(color = "grey20", size = 20),
+        axis.title.x = element_text(color = "grey20", size = 20),
+        axis.title.y = element_text(color = "grey20", size = 20)
+        )
+ggsave('scatter2a.png')
+scatter2a 
+
+## SCATTER 2---------------------------------------------------------------------------------------------------
+
+#creating a color list for manual legend later
+colors_list <- c("Average Departure Delay" = "#F08080", "Average Arrival Delay" = "#9370DB") 
+#Create a color list to be able to plot two different scatter plots each with differentcolor later on and to create a manual legend   
+
+#Average Arrival / Departure Delay against plane life with regression line
+scatter2b <- ggplot() + 
+  geom_jitter(data=q2, aes(x = Plane_Life, y = AVGDepDelay, color = "Average Departure Delay"),size = 2) + 
+  geom_smooth(data=q2, aes(x = Plane_Life, y = AVGDepDelay), color = "#DC143C", method =loess, se=F,alpha = 0.8) +
+  geom_jitter(data=q2, aes(x = Plane_Life, y = AVGArrDelay, color = "Average Arrival Delay"),size = 2) +
+  geom_smooth(data=q2, aes(x = Plane_Life, y = AVGArrDelay), color = "#8A2BE2", method =loess, se=F, alpha = 0.8) +
+  labs(title = 'Average Arrival/Departure Delay against Plane Age', x = 'Plane Age', y = 'Average Delay', color = "Legend") +
+  scale_color_manual(values= colors_list) +  #creating a manual legend and using color list to differentiate
+  ylim(30,60) #setting ylimit of 30 to 60
+scatter2b
+ggsave('scatter2b.png')
+## SCATTER 3---------------------------------------------------------------------------------------------------
+
+#Count of delay against plane life with regression line
+scatter2c<- ggplot() + 
+  geom_col(data = q2, aes(x = Plane_Life, y= Count),fill = "#3498DB", size = 3) + 
+  labs(title = 'Count of Delay against Plane Age', x = 'Plane Age' , y = 'Count of Delay') +
+  scale_y_continuous(labels = comma) +
+  theme(axis.text = element_text( hjust = 1, vjust = 0.5)) +
+  theme(axis.text.x = element_text(color = "grey20", size = 20),
+        axis.text.y = element_text(color = "grey20", size = 20),
+        axis.title.x = element_text(color = "grey20", size = 20),
+        axis.title.y = element_text(color = "grey20", size = 20)
+        )
+scatter2c 
+ggsave('scatter2c.png')
+## SCATTER 4---------------------------------------------------------------------------------------------------
+
+#AVG delay against plane life for each different manufacturing company with regression trend line
+scatter2d <- ggplot() + 
+  geom_smooth(data = q2, aes(x = Plane_Life, y= AVGDelay), method = lm,se = F, color = "black", size = 0.6) + 
+  labs(title = 'Average Delay against plane life for each Manufacturers', x = 'Plane Age', y = 'Average Delay') +
+  geom_jitter(data = q2, aes(x = Plane_Life, y= AVGDelay, color = Manufacturer)) + 
+  facet_wrap(~Manufacturer) +      #Facet wrap is to categorize them to manufacturers
+  theme(strip.text = element_text(size = 7))
+scatter2d
+ggsave('scatter2d.png')
+
+## SCATTER 5 ---------------------------------------------------------------------------------------------------
+#count of delay against manufacturing company
+scatter2e <- ggplot() + 
+  geom_col(data = q2, aes(x = Plane_Life, y= Count, fill = Manufacturer)) + 
+  labs(title = 'Count of Delay against plane life for each Manufacturers', x = 'Plane Age', y = 'Count of Delay') +
+  geom_jitter(data = q2, aes(x = Plane_Life, y= Count, color = Manufacturer)) + 
+  scale_y_continuous(labels = comma) +
+  facet_wrap(~Manufacturer) +
+  theme(strip.text = element_text(size = 7))
+scatter2e
+ggsave('scatter2e.png')
+```
+
+question 3
+
+```{r}
+#Q3a
+
+#querying for q3a
+q3a <- dbGetQuery(conn, "
+SELECT Year, Origin, Dest, COUNT(FlightNum) AS Total
+FROM ontime
+WHERE Cancelled = 0 AND Diverted = 0
+GROUP BY Origin,Dest,Year
+")
+q3a
+
+```
+
+Shiny - interactive bar chart
+run q3a and then run this entire chunk
+```{r} 
+#Q3a interactive bar chart
+
+#server - takes input and returns output to user. 
+server <- function(input,output,session){   #Create a server which is a function that contains input, output and session. 
+  
+    #summary of data with reactive data to user input using input id
+    data <- reactive({        
+      req(input$sel_q3)
+      df <- q3a %>% filter(Origin %in% input$sel_q3) 
+    })
+    
+    #ggplot  to update and change graph based on user input
+    output$plot <- renderPlot({
+    ggplot(data()) + 
+        geom_col(aes(x=Year, y = Total, fill= factor(ifelse(Year==2000,"Year 2000", "Year 2001")))) +
+        scale_fill_manual(name = "Year", values=c("#FFBF00","#6495ED")) +
+        facet_wrap_paginate(~Dest) +
+        labs(title = paste("From selected Origin to:" ),subtitle = 'An interactive barchart to compare how the flight differences change over time', x= 'Year',y='Total Flight Count') +
+        scale_x_discrete(limits = c(2000,2001)) +
+        theme(axis.text=element_text(size=12)
+              ,axis.title=element_text(size=15 ,face='bold')
+              ,plot.title = element_text(size = 20 ,face='bold')
+              ,plot.subtitle = element_text(size =18 ))+
+        theme_cowplot()+
+        geom_text(aes(x = Year, y = Total, label = Total), vjust = 0, size = 4.5, color = "black")
+    })
+}
+
+#UI---------------------------------------------------------------------------------------------------
+
+#Create a page that updates the user choice under 'Choose Origin' using input ID
+ui <- fluidPage(
+  h1("Comparison of flight differences over the years by airports"),   #header name
+  selectInput(inputId = "sel_q3",  #To create dropdown box and have all options from q3a$Origin
+              label = "Choose Origin", #Name of category that users can choose from  
+              q3a$Origin), 
+  plotOutput("plot")
+)
+
+
+#Shiny App ---------------------------------------------------------------------------------------------------
+#To run the Shinyapp
+shinyApp(ui = ui , server = server)
+```
+
+```{r}
+#Q3b plotting counts against month
+q3b <- dbGetQuery(conn, "
+SELECT Year, Month ,COUNT(FlightNum) AS Total
+FROM ontime
+WHERE Cancelled = 0 AND Diverted = 0
+GROUP BY Month,Year
+")
+q3b
+
+#q3b plotting count against month grouped by year
+bar3b <- ggplot(q3b) + geom_col(aes(x = Month, y = Total), fill = '#A6ACAF') +
+         facet_wrap(~Year) + 
+         scale_x_discrete(limits = c("JAN","FEB","MAR","APR","MAY","JUN","JUL","AUG","SEPT","OCT","NOV","DEC"))+
+         labs(title = 'Total Flights against Months grouped by Years', y = 'Total Flights') +
+          theme(axis.text.x = element_text(color = "grey20", size = 7),
+            axis.text.y = element_text(color = "grey20", size = 12),
+            axis.title.y = element_text(color = "grey20", size = 20)
+            )
+ggsave('bar3b.png')
+bar3b
+```
+
+```{r}
+#q3c the differences of counts against months grouped by years
+#getting year 2000 counts alone
+q3_year2000 <- dbGetQuery(conn, "
+Select Year, Month , COUNT(FlightNum) AS Year2000
+FROM ontime
+WHERE Cancelled = 0 AND Diverted = 0 AND Year = 2000
+GROUP BY Month
+")
+q3_year2000
+
+#getting year 2001 counts alone
+q3_year2001 <- dbGetQuery(conn, "
+Select Month , COUNT(FlightNum) AS Year2001
+FROM ontime
+WHERE Cancelled = 0 AND Diverted = 0 AND Year = 2001
+GROUP BY Month
+")
+q3_year2001
+
+#combining it into a single dataframe
+q3c <- append(q3_year2000,q3_year2001) #append to combine the dataframe q3_year2000 and q3_year2001 into a single variable called q3c
+q3c <- as.data.frame(q3c)
+q3c
+
+#getting the difference in flight count from year 2000 to 2001
+q3c_difference <- as.data.frame(list(
+  Month = q3c$Month,
+  Difference = -1*(q3c$Year2000 - q3c$Year2001) #have to times a negative for the difference if not an increase will be negative since Year                                                     2000 count is lesser than Year 2001 count.
+))
+q3c_difference
+
+
+#plotting the difference of flight count by months from Year 2000 to 2001
+bar3c<- q3c_difference %>% mutate(Color = ifelse(Difference <0, "green","red")) %>% #set the condition that if its difference is more than 0, set bar chart to green color, if the difference is less than 0, set the difference to red.
+      ggplot() +
+      geom_col(aes(x = Month, y = Difference, fill = Color)) +
+      scale_x_discrete(limits = c("JAN","FEB","MAR","APR","MAY","JUN","JUL","AUG","SEPT","OCT","NOV","DEC"))+
+      labs(title = 'Differences in flight by Months across two years', y = 'Number of flight differences') +
+      geom_text(aes(x = Month, y = Difference, label = round(Difference,digits = 1)), vjust = 1, size = 3) +
+      scale_y_continuous(labels = comma) +
+      theme(legend.position="none")
+bar3c    
+ggsave('bar3c.png')
+```
+
+
+Q4
+```{r}
+#Q4 part 1 depdelay vs arrdelay of same plane - does departure delay affect arrival delay
+
+q4a <- dbGetQuery(conn, "
+SELECT DepDelay, ArrDelay
+FROM Ontime
+WHERE DepDelay >0 AND ArrDelay >0 AND Cancelled = 0 AND Diverted = 0
+LIMIT 50000
+")
+q4a
+
+##GGPLOT ---------------------------------------------------------------------------------------------------
+
+#plotting for q4 to find the relationship for arrival delay and departure delay
+scatterq4a <- ggplot() + 
+  geom_point(data= q4a, aes(x = DepDelay, y = ArrDelay), color ='#778899') +
+  geom_smooth(data= q4a, aes(x = DepDelay, y = ArrDelay), color = '#1C2833') +
+  labs(title = 'Arrival Delay vs Departure Delay',x= 'Departure Delay', y = 'Arrival Delay') +
+    theme(axis.text.x = element_text(color = "grey20", size = 20),
+        axis.text.y = element_text(color = "grey20", size = 20),
+        axis.title.x = element_text(color = "grey20", size = 20),
+        axis.title.y = element_text(color = "grey20", size = 20)) +
+  xlim(0,1000) +
+  ylim(0,1000) +
+  theme_stata()
+ggsave('scatterq4a.png')
+scatterq4a
+  
+
+```
+
+```{r}
+#q4 part 2 
+
+#querying the number of flights that have average delay more than 0 and getting its Destination
+q4testa <- dbGetQuery(conn, "
+SELECT Origin,Dest, (CASE
+WHEN AVG(DepDelay + ArrDelay) > 0 THEN COUNT(FlightNum) END) AS Delayed_Flights
+FROM ontime
+WHERE Cancelled = 0 AND Diverted = 0 AND DepDelay >10 AND ArrDelay >10
+GROUP BY Dest
+")
+q4testa
+
+#querying the number of flights that have average delay more than 0 and getting its Origin
+q4testb <- dbGetQuery(conn, "
+SELECT Origin, (CASE
+WHEN AVG(DepDelay + ArrDelay) > 0 THEN COUNT(FlightNum) END) AS Impacted_Flights
+FROM ontime
+WHERE Cancelled = 0 AND Diverted = 0
+GROUP BY Origin
+LIMIT 233
+")
+
+q4testb
+
+#creating a new dataframe to combine both so that can set the conditions where Dest a == Origin b to see how departure delay affects arrival delay.
+q4testc <- as.data.frame(list(
+    Dest_a = q4testa$Dest,
+  Origin_b = q4testb$Origin,
+  Delayed_Flights = q4testa$Delayed_Flights,
+  Impacted_Flights = q4testb$Impacted_Flights
+))
+q4testc
+
+#Filtering using condition that Dest a equals Origin b
+q4testc<- q4testc %>% 
+  filter(Dest_a == Origin_b)
+q4testc
+
+#note that Destination B is same as Origin B. Its the perspective
+
+#Plotting to see how many delayed flights are to Destination a
+ggplot(q4testc) + 
+  geom_col(aes(x = Dest_a, y= Delayed_Flights, fill = Origin_b )) +
+  labs(title = 'Airport A to Destination B', x = 'To Destination Airport' , y = 'Count of Delayed Flights') +
+  geom_text(aes(x = Dest_a, y = Delayed_Flights, label = round(Delayed_Flights,digits = 1)), vjust = -0.5, size = 4) +
+  theme(legend.position="none")
+
+#Plotting to see how many impacted flights are from origin b.
+ggplot(q4testc) + 
+  geom_col(aes(x = Origin_b, y= Impacted_Flights, fill = Origin_b )) +
+  labs(title = 'Origin B to Airport C', x = 'From Origin Airport' , y = 'Count of Impacted Flights') +
+  geom_text(aes(x = Origin_b, y = Impacted_Flights, label = round(Impacted_Flights,digits = 1)), vjust = -0.5, size = 4) +
+  scale_y_continuous(labels = comma) +
+  theme(legend.position="none")
+
+
+
+```
+
+Question 5
+```{r}
+q5 <- dbGetQuery(conn, "
+SELECT ArrDelay,DepDelay,TaxiIn,TaxiOut,ActualElapsedTime
+FROM ontime
+WHERE Cancelled = 0 AND Diverted = 0 AND DepDelay >0 AND ArrDelay >0
+LIMIT 10000
+")
+q5
+
+#skim q5 to check for any missing values. If no missing value we don't have to impute mean
+skim(q5)
+```
+
+```{r}
+#Linear Regression learner
+
+#creating task named airplanes. backend is using which dataframe we queried earlier and target is the variable we want to predict
+task <- TaskRegr$new('airplanes', backend = q5 , target = 'ArrDelay')
+measure <- msr('regr.mse') #to use regression mean squared error
+
+#Choosing a learner which is linear regression aka regr.lm
+learner_lr <- lrn('regr.lm')
+
+#Setting seed to get consistent predictions
+set.seed(1)
+
+#training and predicting with Linear Regression learner
+train_set_lr <- sample(task$nrow, 0.7* task$nrow) #Create training set
+test_set_lr <- setdiff(seq_len(task$nrow), train_set_lr) #Create test set
+learner_lr$train(task, row_ids = train_set_lr) #training learner using training set
+learner_lr$predict(task, row_ids = test_set_lr)$score() #Score is to get the mse
+
+#predicting with linear regression learner
+guess1 <- predict(learner_lr, task$data(1:3000), predict_type = "<Prediction>") #Shows a table with actual value and predicted values
+guess1
+
+#plotting the predicted value against actual value using ridge regression learner
+scatterq5a <- ggplot() + 
+              geom_smooth(data = guess1, aes(x = truth, y= response), color = "black", size = 1) +
+              geom_jitter(data = guess1, aes(x = truth, y = response ), color = 'darkgreen', alpha = 0.6, size = 3)+
+              labs(title = 'Actual Arrival Delay vs Predicted Arrival Delay(Linear Regression)',x= 'Actual Arrival Delay', y = 'Predicted Arrival Delay') +
+                  theme(axis.text.x = element_text(color = "grey20", size = 17),
+                    axis.text.y = element_text(color = "grey20", size = 17),
+                    axis.title.x = element_text(color = "grey20", size = 20),
+                    axis.title.y = element_text(color = "grey20", size = 20)
+                    )
+ggsave('scatterq5a.png')              
+scatterq5a
+```
+
+```{r}
+#Creating Ridge Regression Learner
+
+#Using same task as above
+
+#creating ridge regression learner
+learner_ridge <- lrn('regr.glmnet')
+learner_ridge$param_set$values <- list(alpha = 0, lambda = 0.03) #alpha = 0 is for ridge regression and alpha = 1 is for lasso regression
+#Lambda has to be provided for both alpha = 0 and 1.
+
+#Setting seed to get consistent predictions
+set.seed(1)
+
+#Training and test set
+train_set <- sample(task$nrow, 0.7 * task$nrow)
+test_set <- setdiff(seq_len(task$nrow), train_set)
+
+#impute mean to fill in missing values (not needed since there are no missing value but just for showcase)
+learner_gr <- po('scale') %>>%
+  po('imputemean') %>>%
+  po(learner_ridge)
+glrn_ridge <- GraphLearner$new(learner_gr) #Label the new learner with impute mean as glrn_ridge
+
+
+#tuning envionment
+tune_lambda <- ParamSet$new (list(ParamDbl$new('regr.glmnet.lambda', lower = 0.01, upper = 2))) #Setting up hyperparameters and range of values to be explored
+tuner <- tnr('grid_search')  #Using grid search as the search method
+terminator <- trm('evals', n_evals = 20) #Determine how many times the procedure will be repeated. In this case, 20 times.
+
+
+#combine the imputed mean learner, tuning environment, measure all into a new final learner to be trained and tested
+learner_new <- AutoTuner$new(
+  learner = glrn_ridge,
+  resampling = rsmp('cv',folds = 3),
+  measure = measure,
+  search_space = tune_lambda,
+  terminator = terminator,
+  tuner = tuner
+)
+
+#Training and predicting with new ridge regression learner
+learner_new$train(task,row_ids = train_set)
+learner_new$predict(task, row_ids = test_set)$score() #to get mse
+
+#predicting with new ridge regression learner
+guess2 <- predict(learner_new, task$data(1:3000), predict_type = "<Prediction>")   
+
+#plotting the predicted value against actual value using ridge regression learner
+scatterq5b <- ggplot() + 
+              geom_smooth(data = guess2, aes(x = truth, y= response), color = "black", size = 1) +
+              geom_jitter(data = guess2, aes(x = truth, y = response ), color = 'red', alpha = 0.6, size = 3)+
+              labs(title = 'Actual Arrival Delay vs Predicted Arrival Delay(Ridge Regression)',x= 'Actual Arrival Delay', y = 'Predicted Arrival Delay') +
+                  theme(axis.text.x = element_text(color = "grey20", size = 17),
+                    axis.text.y = element_text(color = "grey20", size = 17),
+                    axis.title.x = element_text(color = "grey20", size = 20),
+                    axis.title.y = element_text(color = "grey20", size = 20)
+                    )
+ggsave('scatterq5b.png')              
+scatterq5b
+```
+
+
+```{r}
+#Random Forest R
+#For random forest, i had to reduce the upper limit and the number of folds due to computer not being able to run more than this amount.
+
+#creating random forest learner
+learner_rf <- lrn('regr.ranger')
+learner_rf$param_set$values <- list(min.node.size = 1)
+
+#Setting seed to get consistent predictions
+set.seed(1)
+
+
+#Imputing mean for random forest
+gr_rf <- po('scale') %>>%
+  po('imputemean') %>>%
+  po(learner_rf)
+
+#tuning random forest
+glrn_rf <- GraphLearner$new(gr_rf)
+tune_ntrees <- ParamSet$new(list(
+  ParamInt$new('regr.ranger.num.trees', lower = 1, upper = 10) #Setting up hyperparameters and range of values to be explored 
+))
+
+#combine into new random forest learner
+new_rf <- AutoTuner$new(
+  learner = gr_rf,
+  resampling = rsmp('cv', folds = 2),
+  measure = measure,
+  search_space = tune_ntrees,
+  terminator = terminator,
+  tuner = tuner
+)
+
+#Training and predicting with random forest learner
+new_rf$train(task, row_ids = train_set)
+new_rf$predict(task, row_ids = test_set)$score()
+
+
+#predicting with linear regression learner
+guess3 <- predict(new_rf, task$data(1:3000), predict_type = "<Prediction>")
+guess3
+
+#plotting the predicted value against actual value using ridge regression learner
+scatterq5c <- ggplot() + 
+              geom_smooth(data = guess3, aes(x = truth, y= response), color = "black", size = 1) +
+              geom_jitter(data = guess3, aes(x = truth, y = response ), color = 'blue', alpha = 0.6, size = 3)+
+              labs(title = 'Actual Arrival Delay vs Predicted Arrival Delay(Random Forest)',x= 'Actual Arrival Delay', y = 'Predicted Arrival Delay') +
+                  theme(axis.text.x = element_text(color = "grey20", size = 17),
+                    axis.text.y = element_text(color = "grey20", size = 17),
+                    axis.title.x = element_text(color = "grey20", size = 20),
+                    axis.title.y = element_text(color = "grey20", size = 20)
+                    )
+ggsave('scatterq5c.png')              
+scatterq5c
+
+```
+
+```{r}
+#Benchmark comparison against the 3 leaners
+
+#Setting seed to get consistent predictions
+set.seed(1)
+
+#create list of learners to add to benchmark test later on (linear regression, ridge regression and random forest)
+learner_list <- list(
+  learner_lr,
+  glrn_ridge,
+  new_rf
+)
+
+bm_design <- benchmark_grid(task = task, resamplings = rsmp('cv', folds = 3), learners = learner_list)  #creating the benchmark boxplot by selecting the task and learners included.
+bmr <- benchmark(bm_design, store_models = TRUE) 
+
+#Plotting the benchmark using autoplot
+bm_plot <- autoplot(bmr) + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) + #Changing the angle of the xaxis and setting horizontal height adjustment to 1
+  labs(title = 'Benchmarking of learners', x = 'Learners' , y = 'Regression mean squared error')
+bm_plot
+ggsave('bm_plot.png')
+
+  
+
+#Comparing the learners using a table format
+bmr$aggregate(measure)
+
+```
+
